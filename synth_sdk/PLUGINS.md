@@ -57,6 +57,13 @@ Include only `op1_plugin.h`.
 **Helpers**: `OP1_SINE_TABLE` (8192 x int16), `op1_sat16`, `op1_mul16` (Q15). Second knob pages and latching
 presses: the `press` field (see the comments in `op1_plugin.h`).
 
+**Optional FX callbacks** (leave them 0 if you do not need them; `plugins/drive` uses all three):
+- `render_stereo(l, r, params)`: the master FX gets both channels instead of `render` on the mono sum.
+- `key(pos, knob, pressed)`: encoder presses on your FX page; return 1 if you handled it.
+- `knob(pos, knob, delta, words)`: encoder turns on your FX page (`delta` 1024 per detent); edit the 8 raw `words`
+  in place and return 1, or return 0 for the default handling. Changed words are saved with the sound. Words 0..3
+  are raw (`op1_fx_param_q15` / `op1_fx_param_raw` convert), 5..7 are 0..32767.
+
 ## Rules (the code runs in the audio interrupt)
 
 A crash, a very long block or an endless loop locks the OP-1 until it is switched off.

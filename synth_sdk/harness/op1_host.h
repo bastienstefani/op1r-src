@@ -56,5 +56,6 @@ static inline volatile int16_t *op1_fx_meter(int pos) { return &host_fx_meter[po
 static inline int op1_fx_screen_pos(void) { return 0; }
 static inline const int16_t *op1_fx_knobs(int pos) { return host_fx_knobs[pos % 3]; }
 static inline int32_t op1_fx_param_q15(const int16_t *p, int i) { return p[i] < 0 ? 0 : p[i]; }
+static inline int16_t op1_fx_param_raw(int i, int32_t q15) { (void)i; return (int16_t)(q15 < 0 ? 0 : q15 > 32767 ? 32767 : q15); }
 static inline void op1_fx_knobs_live(int16_t out[4]) { for (int i = 0; i < 4; i++) out[i] = host_fx_knobs[0][i]; }
 #endif

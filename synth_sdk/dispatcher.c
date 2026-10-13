@@ -165,6 +165,7 @@ void fx_render_stereo(void *self, int16_t *l, int16_t *r, const int16_t *params)
     int e = (n > 0 && n < op1_fx_count) ? n : 0;
     if (!e) { fx_cur_master = 0; FILTER_ST_RENDER(self, l, r, params); return; }
     if (e != fx_cur_master) { fx_cur_master = e; op1_fxs[e]->init(OP1_FX_MASTER); }
+    if (op1_fxs[e]->render_stereo) { op1_fxs[e]->render_stereo(l, r, params); return; }   /* FX's own stereo */
     int16_t m[OP1_FX_BLOCK], y[OP1_FX_BLOCK];
     for (int i = 0; i < OP1_FX_BLOCK; i++) y[i] = m[i] = (int16_t)((l[i] + r[i]) >> 1);
     op1_fxs[e]->render(OP1_FX_MASTER, y, params);
@@ -856,6 +857,7 @@ void key_event_hook(int code, int pressed)
         int e = custom_fx_page();
         if (e) {
             int k = press_knob[code - 0x3B];
+            if (op1_fxs[e]->key && op1_fxs[e]->key(op1_fx_screen_pos(), k, pressed)) return;   /* FX's own */
             uint8_t mode = op1_fxs[e]->press[k];
             if (mode) {                                  /* handled: swallow press and release */
                 if (pressed) op1_fx_page[op1_fx_screen_pos()][k] ^= 1;
@@ -1020,6 +1022,20 @@ void knob_event_hook(int knob, int16_t *delta)
         return;
     }
     int e = custom_fx_page();
+    if (e && knob >= 0 && knob < 4 && op1_fxs[e]->knob) {          /* FX's own encoder handling */
+        int pos = op1_fx_screen_pos();
+        int16_t *w = (int16_t *)op1_fx_knobs(pos), before[8];
+        for (int i = 0; i < 8; i++) before[i] = w[i];
+        if (op1_fxs[e]->knob(pos, knob, *delta, w)) {
+            for (int i = 0; i < 8; i++)
+                if (w[i] != before[i]) {                         /* master: saved from the live words (0x019D9B94) */
+                    if (pos != OP1_FX_MASTER)
+                        PATCH_SET_FX(PATCH_OBJ(pos, *(volatile int *)(pos ? 0xFF8016D8 : 0xFF8016D4)), w);
+                    break;
+                }
+            return;
+        }
+    }
     if (e && knob >= 0 && knob < 3 && op1_fxs[e]->press[knob] == OP1_PRESS_PAGE) {
         int pos = op1_fx_screen_pos();
         if (op1_fx_page[pos][knob]) {

@@ -129,12 +129,29 @@ static inline int32_t op1_fx_param_q15(const int16_t *p, int i)
     return v < 0 ? 0 : (v > 32767 ? 32767 : v);
 }
 static inline volatile int16_t *op1_fx_meter(int pos) { return (volatile int16_t *)(0xFF801774 + pos * 16); }
+/* 0..32767 -> raw FX knob word i (inverse of op1_fx_param_q15), for FX that write their own knob words (`knob`) */
+static inline int16_t op1_fx_param_raw(int i, int32_t q15)
+{
+    const int16_t *rg = (const int16_t *)(0x01DE5C50 + 5 * 0x30 + i * 6);
+    int32_t lo = rg[0], hi = rg[1];
+    q15 = q15 < 0 ? 0 : (q15 > 32767 ? 32767 : q15);
+    if (hi <= lo) return (int16_t)q15;                   /* table not filled: raw */
+    return (int16_t)(lo + q15 * (hi - lo) / 32767);
+}
 #endif
 
 typedef struct {
     void (*init)(int pos);                                         /* FX (re)created at pos      */
     void (*render)(int pos, int16_t *buf, const int16_t *params);   /* 64 samples, in place       */
     uint8_t press[4];        /* encoder press per knob (blue..red): OP1_PRESS_NONE / _PAGE / _LATCH */
+    /* optional, 0 = not used: */
+    void (*render_stereo)(int16_t *l, int16_t *r, const int16_t *params);   /* master FX (pos 2): both channels,
+                              * 64 samples each, in place, instead of render() on the mono sum; init(2) as usual */
+    int (*key)(int pos, int knob, int pressed);       /* encoder press / release on the FX page (KeyHandler thread):
+                              * 1 = handled (the event goes no further, `press` is not applied), 0 = as without */
+    int (*knob)(int pos, int knob, int delta, int16_t *words);   /* encoder turn on the FX page: `words` = the slot's 8
+                              * live raw words, edit them in place; 1 = handled (changed words are saved with the
+                              * sound), 0 = default handling. delta: 1024 per detent */
 } op1_fx_t;
 /* Encoder presses on a custom FX page (dispatcher.c hooks the KeyHandler dispatch):
  *  OP1_PRESS_PAGE : press toggles the knob between its normal parameter (params[k]) and a second
