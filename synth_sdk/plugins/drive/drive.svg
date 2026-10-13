@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px"
+	 width="320px" height="160px" viewBox="0 0 320 160">
+<!-- drive: the curve, waves and encoder widgets are drawn by code (see screen.h) -->
+<rect x="0" y="0" width="320" height="160" fill="#000000"/>
+</svg>
