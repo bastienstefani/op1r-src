@@ -227,18 +227,23 @@ extern volatile uint8_t eu_active[2];
 #define CUR_MODE()    (*(volatile int *)0x01DE4C40 == 1)
 /* dots (seq/dots.c) works the same way with its own flag dt_active[mode]; at most one flag is set per mode */
 extern volatile uint8_t dt_active[2];
+/* roll (seq/roll.c) runs as type 5 (arpeggio) + rl_active[mode]: the arpeggio's player getter (CALL 0x01A46400
+ * @0x01A0D1B0) -> rl_player_get, the arpeggio screen slot 0x2C holds the roll screen (eu_sync_screen) */
+extern volatile uint8_t rl_active[2];
 int eu_seq_from_name(const dstring *s)
 {
     const char *p = s->cap > 15 ? s->u.ptr : s->u.buf;
-    int eu = streq_n(p, "euclid", s->size), d = streq_n(p, "dots", s->size);
+    int eu = streq_n(p, "euclid", s->size), d = streq_n(p, "dots", s->size), ro = streq_n(p, "roll", s->size);
     eu_active[CUR_MODE()] = (uint8_t)eu;
     dt_active[CUR_MODE()] = (uint8_t)d;
-    return eu || d ? 3 : SEQ_FROM_NAME(s);
+    rl_active[CUR_MODE()] = (uint8_t)ro;
+    return eu || d ? 3 : ro ? 5 : SEQ_FROM_NAME(s);
 }
 const char *eu_seq_name(int type)
 {
     if (type == 3 && eu_active[CUR_MODE()]) return "euclid";
     if (type == 3 && dt_active[CUR_MODE()]) return "dots";
+    if (type == 5 && rl_active[CUR_MODE()]) return "roll";
     for (int i = 0; i < 6; i++) if (SEQ_TABLE[i].type == type) return SEQ_TABLE[i].name;
     return "pattern";
 }
@@ -267,6 +272,13 @@ static uint32_t eu_scr[32], eu_scr_vt[10];
 static void *finger_screen;
 static int eu_scr_ready;
 static void eu_sync_screen(void);
+extern const op1_screen_t SCREEN_roll;
+void rl_press(int pos, int knob);
+void rl_turn(int pos, int knob, int delta);
+#define ARP_SCREEN_ID 0x2C
+static uint32_t rl_scr[32], rl_scr_vt[10];
+static void *arp_screen;
+static int rl_scr_ready;
 
 /* ---- quad LFO (lfo/quadlfo.c) ---- */
 extern int  ql_is_quad(const int16_t *w);
@@ -413,6 +425,7 @@ int fx_name_eq(const char *name, const dstring *s)
 
 static void eu_sync_screen(void)
 {
+    if (rl_scr_ready) SCREEN_TABLE[ARP_SCREEN_ID] = rl_active[CUR_MODE()] ? (void *)rl_scr : arp_screen;   /* roll */
     if (!eu_scr_ready) return;
     SCREEN_TABLE[EUCLID_SCREEN_ID] = dt_active[CUR_MODE()] && dt_scr_ready ? (void *)dt_scr
                                    : eu_active[CUR_MODE()] ? (void *)eu_scr : finger_screen;
@@ -601,6 +614,15 @@ void *screens_ctor_hook(void)
         dt_scr_vt[4 * 2 + 1] = (uint32_t)SCREEN_dots.init;
         dt_scr[3] = (uint32_t)dt_scr_vt;
     }
+    {                                                            /* roll screen object (arpeggio slot 0x2C) */
+        void *saved = SCREEN_TABLE[ARP_SCREEN_ID];
+        SCREEN_CTOR(rl_scr, ARP_SCREEN_ID, "usbout.svg");        /* empty svg: drawn in code */
+        SCREEN_TABLE[ARP_SCREEN_ID] = saved;
+        for (int i = 0; i < 10; i++) rl_scr_vt[i] = ITER_SCREEN_VT[i];
+        rl_scr_vt[3 * 2 + 1] = (uint32_t)SCREEN_roll.update;
+        rl_scr_vt[4 * 2 + 1] = (uint32_t)SCREEN_roll.init;
+        rl_scr[3] = (uint32_t)rl_scr_vt;
+    }
     return r;
 }
 
@@ -643,6 +665,11 @@ void screens_load_hook(void *table)
         sd_scr[0] = (uint32_t)SVG_LOAD((void *)sd_scr[2]);
         drum_screen = SCREEN_TABLE[0x10];
         if (se_ready && sd_scr[0] && drum_screen) sd_ready = 1;  /* (texts shared, made once) */
+    }
+    if (rl_scr[2]) {                                             /* roll screen (slot 0x2C, before euclid's sync) */
+        rl_scr[0] = (uint32_t)SVG_LOAD((void *)rl_scr[2]);
+        arp_screen = SCREEN_TABLE[ARP_SCREEN_ID];
+        if (rl_scr[0] && arp_screen) { SCREEN_roll.init(rl_scr); rl_scr_ready = 1; }   /* (loads the saved rolls) */
     }
     if (dt_scr[2]) {                                             /* dots screen (slot 0x2D, before euclid's sync) */
         dt_scr[0] = (uint32_t)SVG_LOAD((void *)dt_scr[2]);
@@ -723,6 +750,11 @@ static int dots_page(void)
 {
     eu_sync_screen();
     return dt_scr_ready && dt_active[CUR_MODE()] && CURRENT_SCREEN == EUCLID_SCREEN_ID;
+}
+static int roll_page(void)
+{
+    eu_sync_screen();
+    return rl_scr_ready && rl_active[CUR_MODE()] && CURRENT_SCREEN == ARP_SCREEN_ID;
 }
 
 /* the live words (LFO 0xFF8014C4 / 0xFF801644, synth knobs 0xFF8013C4 + slot * 16) are reloaded from the
@@ -830,6 +862,10 @@ void key_event_hook(int code, int pressed)
         }
         if (code >= 0x3B && code <= 0x3E) { if (pressed) dt_press(m, press_knob[code - 0x3B]); return; }
         if (code == 0x21) { if (pressed) dt_rec_key(m); return; }  /* REC: step / live record (tape REC not armed) */
+    }
+    if (code >= 0x3B && code <= 0x3E && roll_page()) {          /* roll: presses (grid, clear, velocity, play) */
+        if (pressed) rl_press(*(volatile int *)0x01DE4C40 == 1, press_knob[code - 0x3B]);
+        return;
     }
     if ((code == 0x24 || code == 0x25) && euclid_page()) {      /* euclid: left / right = keyboard octave */
         if (pressed) eu_octave(code == 0x25 ? 1 : -1);
@@ -992,6 +1028,10 @@ void knob_event_hook(int knob, int16_t *delta)
         int m = *(volatile int *)0x01DE4C40 == 1, sh = *(volatile uint8_t *)0x01DD7F78;
         if (knob == 2 && sh) dt_select(m, *delta);
         else dt_turn(m, knob, *delta, sh);                      /* blue, green / white (record mode), red */
+        return;
+    }
+    if (knob >= 0 && knob < 4 && roll_page()) {                  /* roll: cursor, pitch view, note length, loop */
+        rl_turn(*(volatile int *)0x01DE4C40 == 1, knob, *delta);
         return;
     }
     if (knob >= 0 && knob < 4 && euclid_page()) {                /* euclid: edit the selected sequencer */

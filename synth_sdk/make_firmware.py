@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Build custom synth engines and an installable OP-1 firmware (fw 246).
 
-  ./make_firmware.py [--opz] [--release]   -> ../op1_246_custom-repacked.op1   (synths / FX: plugins/*/plugin.json)
+  ./make_firmware.py [--opz] [--release] [--native]   -> ../op1_246_custom-repacked.op1   (plugins/*/plugin.json)
 
   --release  boot screen shows only "op1r <VERSION>" (use for the patcher); local builds add the build time
+  --native   use the bfin-elf tools in PATH instead of the Docker image (same versions as toolchain/Dockerfile:
+             binutils 2.40, gcc 12.3; other versions build too, but not byte-identical to a release)
 
   --opz   also enable the hidden OP-Z controller MIDI mode (docs/12). COM -> CTRL (T2) starts in the
           normal CTRL mode; the OP-Z mode is switched on by the host-mode SysEx F0 00 20 76 00 01 03 F7
@@ -62,6 +64,8 @@ HOOKS = {0x019B975C: ('hook_namecmp', bytes.fromhex('18300b32')),      # instr_t
          0x01A42BDC: ('hook_seqname2', bytes.fromhex('ffe3b4fb')),       # load (synth): SeqIds::from_name
          0x01A42CE0: ('hook_seqname3', bytes.fromhex('ffe332fb')),       # load (drum): SeqIds::from_name
          0x01A422EC: ('hook_seqtoname', bytes.fromhex('09e138a6')),      # SeqIds::name(type) entry -> eu_seq_name
+         0x01A0D1B0: ('hook_arpplayer', bytes.fromhex('01e328c9')),      # create_player case 5: arpeggio or roll
+         0x01A5E7D0: ('hook_clkreset', bytes.fromhex('09e17c18')),       # sequencer clock reset entry -> rl_clock_reset
          0x019C9C3A: ('hook_lfoname1', bytes.fromhex('ffe391ff')),       # lfo_types::from_name compare
          0x019C9BE2: ('hook_lfoname2', bytes.fromhex('ffe3bdff')),       # lfo_types is_valid compare
          0x0193DE2A: ('hook_rlp0193de2a', bytes.fromhex('07e3c95a')),   # CALL read_lfo_param
@@ -164,10 +168,10 @@ def gen_table(engs, fxs):
                  ''.join(json.dumps(f['name']) + ', ' for f in fxs) + '0 };')
     open(os.path.join(HERE, 'build', 'engines_table.c'), 'w').write('\n'.join(lines) + '\n')
 
-def build(engs, fxs):
+def build(engs, fxs, native=False):
     os.makedirs(os.path.join(HERE, 'build'), exist_ok=True)
     gen_table(engs, fxs)
-    srcs = ['dispatcher.c', 'build/engines_table.c', 'lfo/quadlfo.c', 'seq/euclid.c', 'seq/dots.c', 'screens/iterlab.c', 'screens/sysmon.c', 'screens/usbtrack.c', 'screens/usbout.c', 'tape/markers.c', 'screens/oblique.c', 'build/oblique_data.c', 'tape/countin.c', 'screens/settings.c', 'tape/punch.c', 'screens/sampedit.c'] + [s for e in engs for s in [e['source']] + e.get('extra_sources', [])] + [s for f in fxs for s in [f['source']] + f.get('extra_sources', [])]
+    srcs = ['dispatcher.c', 'build/engines_table.c', 'lfo/quadlfo.c', 'seq/euclid.c', 'seq/dots.c', 'seq/roll.c', 'screens/iterlab.c', 'screens/sysmon.c', 'screens/usbtrack.c', 'screens/usbout.c', 'tape/markers.c', 'screens/oblique.c', 'build/oblique_data.c', 'tape/countin.c', 'screens/settings.c', 'tape/punch.c', 'screens/sampedit.c'] + [s for e in engs for s in [e['source']] + e.get('extra_sources', [])] + [s for f in fxs for s in [f['source']] + f.get('extra_sources', [])]
     objs = []
     cmds = []
     for s in srcs:
@@ -182,8 +186,11 @@ def build(engs, fxs):
     cmds.append('bfin-elf-objcopy -O binary -j .l1tramp build/synth.elf build/l1tramp.bin')
     cmds.append('bfin-elf-nm build/synth.elf > build/synth.sym')
     cmds.append('bfin-elf-objdump -d build/synth.elf > build/synth.lst && bfin-elf-size build/synth.elf')
-    sh(f'docker run --rm -u {os.getuid()}:{os.getgid()} -v "{HERE}":/work bfin-elf-toolchain '
-       f'sh -c \'{" && ".join(cmds)}\'')
+    if native:
+        sh(f'cd "{HERE}" && {" && ".join(cmds)}')
+    else:
+        sh(f'docker run --rm -u {os.getuid()}:{os.getgid()} -v "{HERE}":/work bfin-elf-toolchain '
+           f'sh -c \'{" && ".join(cmds)}\'')
     syms = {}
     for line in open(os.path.join(HERE, 'build', 'synth.sym')):
         a, t, n = line.split(); syms[n.lstrip('_')] = int(a, 16)
@@ -358,12 +365,16 @@ def patch_db(dbp, engs, fxs):
     if not c.execute("SELECT 1 FROM seq_types WHERE type='dots'").fetchone():
         sid = c.execute('SELECT MAX(id) FROM seq_types').fetchone()[0] + 1
         c.execute('INSERT INTO seq_types VALUES (?,?)', (sid, 'dots'))
+    # piano roll (seq/roll.c): runs as arpeggio (type 5) + flag
+    if not c.execute("SELECT 1 FROM seq_types WHERE type='roll'").fetchone():
+        sid = c.execute('SELECT MAX(id) FROM seq_types').fetchone()[0] + 1
+        c.execute('INSERT INTO seq_types VALUES (?,?)', (sid, 'roll'))
     c.commit()
     for r in c.execute('SELECT * FROM synth_types ORDER BY id'): print('  ', r)
     for r in c.execute('SELECT * FROM fx_types ORDER BY id'): print('  fx', r)
     c.close()
 
-def main(opz=False, release=False):
+def main(opz=False, release=False, native=False):
     engs, fxs = plugins.load()
     assert 0 < len(engs) <= 15 and len(fxs) <= 15
     for lst in (engs, fxs):                     # order = the number stored in patches (MAGIC + n): never renumber
@@ -385,7 +396,7 @@ def main(opz=False, release=False):
     ob_cards, _ = gen_oblique.build(os.path.join(SRC_FW, 'content', 'display', 'opfont.svg'),
                                     os.path.join(HERE, 'screens', 'oblique', 'cards.txt'))
     gen_oblique.emit(ob_cards, os.path.join(HERE, 'build', 'oblique_data.c'))
-    code, hooks, syms = build(engs, fxs)
+    code, hooks, syms = build(engs, fxs, native)
     assert len(code) < 0x100000
     shutil.rmtree(OUT_FW, ignore_errors=True); shutil.copytree(SRC_FW, OUT_FW)
     patch_ldr(os.path.join(SRC_FW, 'OP1_vdk.ldr'), os.path.join(OUT_FW, 'OP1_vdk.ldr'), code, hooks, syms, opz, release)
@@ -410,5 +421,6 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--opz', action='store_true', help='enable hidden OP-Z controller mode (via SysEx 00 01 03)')
     ap.add_argument('--release', action='store_true', help='boot screen without build time (patcher builds)')
+    ap.add_argument('--native', action='store_true', help='bfin-elf tools from PATH instead of Docker')
     a = ap.parse_args()
-    main(a.opz, a.release)
+    main(a.opz, a.release, a.native)

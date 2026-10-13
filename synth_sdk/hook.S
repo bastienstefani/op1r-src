@@ -189,6 +189,30 @@ _ql_apply_none:
 	.section .hook_seqtoname,"ax"
 	jump.l _eu_seq_name;
 
+/* PlayerManager::create_player case 5 (CALL 0x01A46400 arpeggio singleton @0x01A0D1B0) -> arpeggio or roll */
+	.section .hook_arpplayer,"ax"
+	call _rl_player_get;
+/* sequencer clock reset 0x01A5E7D0 (tape PLAY, MIDI Start, stock sequencers starting): entry -> rl_clock_reset, the
+ * same three stores (beat counters 0x018C187C / 1880 / 1884 = 0) plus rl_reset_pending for roll's beat tracking
+ * (seq/roll.c). Uses only P1 and R0, as the original. */
+	.section .hook_clkreset,"ax"
+	jump.l _rl_clock_reset;
+	.text
+	.align 2
+	.global _rl_clock_reset
+_rl_clock_reset:
+	P1.L = 0x187C;
+	P1.H = 0x018C;
+	R0 = 0 (X);
+	[P1] = R0;
+	[P1 + 4] = R0;
+	[P1 + 8] = R0;
+	P1.L = _rl_reset_pending;
+	P1.H = _rl_reset_pending;
+	R0 = 1 (X);
+	B [P1] = R0;
+	rts;
+
 /* input key "sampler?" checks -> rec_type_ok (dispatcher.c). Each replaces "CC = Rx == R(6); IF !CC JUMP no"
  * (4 bytes) with a CALL; the stub keeps all registers, returns to the next instruction (yes) or to `no`. */
 	.section .hook_recA,"ax"
