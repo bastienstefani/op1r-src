@@ -1,8 +1,11 @@
 # op1r-src
 
 Source code of **op1r**, custom firmware for the Teenage Engineering OP-1 (firmware R246): custom synth engines and
-effects with their own screens, quad LFO, euclid and dots sequencers, USB audio track outs, tape markers, count-in,
-punch in/out, sample editor, resource monitor and more.
+effects with their own screens, quad LFO, euclid, dots and roll (piano roll) sequencers, USB audio track outs, tape
+markers, count-in, punch in/out, sample editor, resource monitor and more.
+
+This branch adds the **roll** piano-roll sequencer (`synth_sdk/seq/roll.c`) and the **drive** distortion FX
+(`synth_sdk/plugins/drive/`); see [docs/](docs) (in French) for their pages and the development guide.
 
 - **Users:** you don't need this repository. Patch your firmware with
   [op1r](https://github.com/pcppcp/op1r) (also in the browser).
@@ -26,7 +29,8 @@ This repository contains no Teenage Engineering firmware. Building needs your ow
 | `synth_sdk/harness/` | host tests and renderers (screens to PNG, plugins to WAV) |
 | `synth_sdk/make_firmware.py` | builds the firmware |
 | `tools/` | MIDI / USB test scripts |
-| `toolchain/Dockerfile` | Blackfin cross compiler (bfin-elf gcc 12) |
+| `toolchain/Dockerfile` | Blackfin cross compiler (bfin-elf gcc 12); `build_native.sh`: the same without Docker |
+| `docs/` | development guide, roll and drive pages, study of the original firmware (in French) |
 
 ## Testing on a PC (no firmware needed)
 
@@ -51,6 +55,9 @@ python3 -m venv op1repacker/.venv && op1repacker/.venv/bin/pip install -e op1rep
 cp /path/to/op1_246.op1 . && op1repacker/.venv/bin/op1repacker unpack op1_246.op1    # -> op1_246/
 cd synth_sdk && python3 make_firmware.py --opz                    # -> ../op1_246_custom-repacked.op1
 ```
+
+Without Docker: `toolchain/build_native.sh` builds the same compiler versions (about 30 minutes), then
+`export PATH=$PWD/toolchain/bfin/bin:$PATH` and `make_firmware.py --opz --native`.
 
 The boot screen of a local build shows `op1r <n>` and the build time. Install it like any OP-1 update (bootloader
 update mode); the original firmware can always be flashed back. **Use at your own risk**: a broken build can lock
