@@ -59,6 +59,10 @@ cd synth_sdk && python3 make_firmware.py --opz                    # -> ../op1_24
 Without Docker: `toolchain/build_native.sh` builds the same compiler versions (about 30 minutes), then
 `export PATH=$PWD/toolchain/bfin/bin:$PATH` and `make_firmware.py --opz --native`.
 
+`--module op1_249.op1` also loads the binary module of maiko's op1_249 image (tape undo / redo, snapshot names,
+scale mode) from your own copy of that image; see [docs/op1_249.md](docs/op1_249.md). Do not distribute such a build
+without its author's consent.
+
 The boot screen of a local build shows `op1r <n>` and the build time. Install it like any OP-1 update (bootloader
 update mode); the original firmware can always be flashed back. **Use at your own risk**: a broken build can lock
 the OP-1 until you flash a working image.

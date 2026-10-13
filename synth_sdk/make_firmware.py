@@ -6,6 +6,8 @@
   --release  boot screen shows only "op1r <VERSION>" (use for the patcher); local builds add the build time
   --native   use the bfin-elf tools in PATH instead of the Docker image (same versions as toolchain/Dockerfile:
              binutils 2.40, gcc 12.3; other versions build too, but not byte-identical to a release)
+  --module IMAGE.op1  also load the module of another firmware image built on op1r (see MODULES: only known images,
+             by sha256; nothing of the image is stored in this repository)
 
   --opz   also enable the hidden OP-Z controller MIDI mode (docs/12). COM -> CTRL (T2) starts in the
           normal CTRL mode; the OP-Z mode is switched on by the host-mode SysEx F0 00 20 76 00 01 03 F7
@@ -16,7 +18,7 @@ Steps: generate engine table -> compile with dockerised bfin-elf-gcc -> patch OP
 firmware -> add synth_types rows (iter + one per engine, knobs[4] = 0x5300+n) -> op1repacker repack.
 Encrypted LDR blocks: only the precomputed patches in l1_patches.json (see L1_IMM_PATCHES).
 """
-import argparse, json, os, shutil, sqlite3, struct, subprocess, sys
+import argparse, binascii, hashlib, io, json, lzma, os, shutil, sqlite3, struct, subprocess, sys, tarfile
 import plugins
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -138,6 +140,74 @@ QUAD_LFO_DEFAULTS = quad_words([(19, 0), (31, 1), (42, 2), (54, 3)])
 OPZ_HOOKS = {0x019E0CFC: ('hook_opzget', bytes.fromhex('00601000')),   # midi_opz_mode_enabled: R0=0; RTS
              0x019E3540: ('hook_opzset', bytes.fromhex('a5e60900'))}   # rx host-mode m!=1,2: B[P4+9]=R5
 
+# Modules of other firmware images built on op1r (--module): binary, loaded from the user's own copy of the image,
+# identified by its sha256 (only the sha256 and addresses below are in this repository). The module's blocks go where
+# its author linked them; its patch sites are copied (this build must hold the R246 bytes there); it takes over the
+# KeyHandler CALLs (`takes`, which held our hooks) and its hooks end in this build's (`chain`: its JUMP.L / CALL to
+# op1r's hook of the version it was built on, re-aimed at our symbol). Its code must call nothing else of op1r's
+# (checked when a module is added here: bfin-elf-objdump of its blocks, CALL / JUMP.L targets and address constants).
+MODULES = {
+    # op1_249 by maiko (https://maikopruett.com/op-1), built on op1r 12 (fc1ae37): tape undo / redo with history on
+    # disk, undo popup, snapshot names, scale mode (scale.cfg), storage bar on the COM screen, logs in /log
+    'b7adf5c0fdd523a726e81880e683eda48061a261944dfa1a7a52c57ebfc41066': dict(
+        name='op1_249', tag='249',
+        blocks=[(0x01E40000, 0x36558), (0x01E76558, 0x40F0C), (0x02800000, 0x180000)],   # code + data, 2 x FILL
+        sites=[(0x018FC0B0, 8), (0x0191B67E, 4), (0x0191B89C, 4), (0x0191B9F0, 4), (0x0191C750, 4), (0x019975F0, 4),
+               (0x019AC548, 4), (0x019ACA10, 4), (0x019ACDB6, 4), (0x019AD220, 4), (0x019AD5A6, 4), (0x019B2690, 4),
+               (0x019F0A2A, 4), (0x019F0A3C, 4), (0x01A53EC8, 4), (0x01A54808, 8), (0x01A54842, 4), (0x01A549A0, 4),
+               (0x01A54AEE, 4)],        # (not copied: its boot text and "Rev. 00249" version strings)
+        takes={0x019C2D3E: 'hook_keyev', 0x019C2E94: 'hook_knobev'},
+        chain={0x01E4064A: ('key_event_hook', 0x01E01468), 0x01E406AE: ('knob_event_hook', 0x01E01A80)}),
+}
+
+def op1_ldr(path):
+    """OP1_vdk.ldr of an .op1 image (CRC-32 LE + LZMA "alone" stream of a tar)"""
+    raw = open(path, 'rb').read()
+    if struct.unpack('<L', raw[:4])[0] != binascii.crc32(raw[4:]):
+        raise SystemExit(f'{path}: CRC-32 mismatch, damaged image')
+    with tarfile.open(fileobj=io.BytesIO(lzma.decompress(raw[4:], format=lzma.FORMAT_ALONE))) as t:
+        for m in t.getmembers():
+            if m.isfile() and m.name.endswith('OP1_vdk.ldr'):
+                return t.extractfile(m).read()
+    raise SystemExit(f'{path}: no OP1_vdk.ldr')
+
+def branch_at(pc, b):
+    """CALL / JUMP.L (pcrel24) at pc -> (target, is_call), else None"""
+    h0, h1 = struct.unpack('<HH', b[:4])
+    if h0 & 0xFE00 != 0xE200:
+        return None
+    o = ((h0 & 0xFF) << 16) | h1
+    return pc + 2 * (o - (1 << 24) if o & 0x800000 else o), bool(h0 & 0x100)
+
+def branch(pc, target, call):
+    o = ((target - pc) >> 1) & 0xFFFFFF
+    assert -0x800000 <= (target - pc) >> 1 < 0x800000
+    return struct.pack('<HH', (0xE300 if call else 0xE200) | (o >> 16), o & 0xFFFF)
+
+def module_load(path, syms):
+    """-> (module dict, its LDR, LDR blocks to insert (headers + payload), [(start, end)] memory used)"""
+    sha = hashlib.sha256(open(path, 'rb').read()).hexdigest()
+    if sha not in MODULES:
+        raise SystemExit(f'{path}: unknown module image (sha256 {sha}); known: '
+                         + ', '.join(m['name'] for m in MODULES.values()))
+    m, ldr = MODULES[sha], op1_ldr(path)
+    out, used = b'', []
+    for addr, cnt in m['blocks']:
+        hit = [(o, c) for o, c, a, n, g in ldr_blocks(ldr) if a == addr and n == cnt]
+        assert len(hit) == 1, (m['name'], hex(addr))
+        o, c = hit[0]
+        data = b''
+        if not c & 0x0100:                                   # a FILL block has no payload
+            data = bytearray(ldr[o + 16:o + 16 + cnt])
+            for pc, (sym, old) in m['chain'].items():        # its hooks end in ours
+                if addr <= pc < addr + cnt:
+                    t = branch_at(pc, data[pc - addr:pc - addr + 4])
+                    assert t and t[0] == old, f'{m["name"]}: {pc:#x} is not the expected branch to {old:#x}'
+                    data[pc - addr:pc - addr + 4] = branch(pc, syms[sym], t[1])
+        out += ldr_hdr(c & 0xFFFF, addr, cnt, 0) + bytes(data)
+        used.append((addr, addr + cnt))
+    return m, ldr, out, used
+
 def sh(cmd):
     print('$', cmd); subprocess.run(cmd, shell=True, check=True)
 
@@ -215,6 +285,13 @@ def ldr_blocks(d):
         yield off, code, addr, cnt, arg
         off += 16 + (0 if code & 0x0100 else cnt)
 
+def ldr_read(d, addr, n):
+    for off, c, a, cnt, g in ldr_blocks(d):
+        if c & 0x1500 or not cnt: continue
+        if a <= addr and addr + n <= a + cnt:
+            return bytes(d[off + 16 + addr - a:off + 16 + addr - a + n])
+    raise SystemExit(f'address {addr:#x} not in a plain LDR block')
+
 def ldr_poke(d, addr, data, expect=None):
     for off, c, a, n, g in ldr_blocks(d):
         if c & 0x1500 or not n: continue            # skip FILL / IGNORE / CALLBACK(encrypted)
@@ -230,9 +307,9 @@ def ldr_poke(d, addr, data, expect=None):
 # right-aligned to the same column. VERSION = synth_sdk/VERSION, a counter bumped for every released change.
 BOOT_TEXT_ADDR = 0x018F7358
 BOOT_TEXT_ORIG = b'\n' * 17 + b' ' * 33 + b'R. 00246'
-def boot_text(release=True):
+def boot_text(release=True, extra=''):
     ver = open(os.path.join(HERE, 'VERSION')).read().strip()
-    tag = f'op1r {ver}'.encode()
+    tag = f'op1r {ver}{"+" + extra if extra else ""}'.encode()
     if not release:                                               # local build: op1r <n> YYYY-MM-DD HH:MM
         import time
         tag += time.strftime(' %Y-%m-%d %H:%M').encode()
@@ -273,8 +350,9 @@ def apply_l1(d, pokes):
         assert bytes(d[off:off + len(old) // 2]).hex() == old, f'L1 bytes at {off:#x} differ from the original'
         d[off:off + len(new) // 2] = bytes.fromhex(new)
 
-def patch_ldr(src, dst, code, hooks, syms, opz=False, release=True):
+def patch_ldr(src, dst, code, hooks, syms, opz=False, release=True, module=None):
     d = bytearray(open(src, 'rb').read())
+    mod = module_load(module, syms) if module else None
     if opz:
         for addr, (sec, orig) in OPZ_HOOKS.items():
             ldr_poke(d, addr, hooks[addr], orig)
@@ -283,7 +361,7 @@ def patch_ldr(src, dst, code, hooks, syms, opz=False, release=True):
         ldr_poke(d, vt + 8 * slot + 4, struct.pack('<I', syms[name]), struct.pack('<I', orig))
     for addr, data in hooks.items():
         if addr in HOOKS: ldr_poke(d, addr, data, HOOKS[addr][1])
-    ldr_poke(d, BOOT_TEXT_ADDR, boot_text(release), BOOT_TEXT_ORIG)   # boot screen: op1r <version> [build time]
+    ldr_poke(d, BOOT_TEXT_ADDR, boot_text(release, mod[0]['tag'] if mod else ''), BOOT_TEXT_ORIG)   # op1r <version> [build time]
     for addr, (sym, orig) in DATA_PATCHES.items():
         ldr_poke(d, addr, struct.pack('<I', syms[sym]), struct.pack('<I', orig))
     for addr, (sym, orig) in IMM_PATCHES.items():              # keep the opcodes, swap the 16-bit halves
@@ -319,6 +397,23 @@ def patch_ldr(src, dst, code, hooks, syms, opz=False, release=True):
         assert len(tramp) <= L1_TRAMP_MAX, len(tramp)
         tramp += b'\0' * (-len(tramp) % 4)
         blk += ldr_hdr(0x0006, L1_TRAMP, len(tramp), 0) + tramp
+    if mod:                                                     # another image's module (--module)
+        m, mldr, mblk, used = mod
+        r246 = open(src, 'rb').read()                           # its sites must not be ours: R246 bytes there
+        for addr, n in m['sites']:
+            ldr_poke(d, addr, ldr_read(mldr, addr, n), ldr_read(r246, addr, n))
+        for addr, sec in m['takes'].items():                    # KeyHandler CALLs: the module first, then ours
+            ldr_poke(d, addr, ldr_read(mldr, addr, 4), hooks[addr])
+        mine = [(CODE_BASE, CODE_BASE + len(code)), (bss, max(bss_end, bss)), (L1_TRAMP, L1_TRAMP + len(tramp))]
+        for o, c, a, n, g in ldr_blocks(d):                    # nothing of the image or of ours where it loads
+            if n:
+                mine.append((a, a + n))
+        for s0, e0 in used:
+            clash = [(hex(a), hex(e)) for a, e in mine if a < e0 and s0 < e]
+            assert not clash, (m['name'], hex(s0), clash)
+        blk += mblk
+        print(f'module {m["name"]}: ' + ', '.join(f'{a:#x}-{e:#x}' for a, e in used)
+              + f'; key / encoder hooks chain to key_event_hook / knob_event_hook')
     d[fin:fin] = blk
     c0, a0, n0, g0 = struct.unpack_from('<IIII', d, 0)
     d[0:16] = ldr_hdr(c0 & 0xffff, a0, n0, g0 + len(blk))
@@ -374,7 +469,7 @@ def patch_db(dbp, engs, fxs):
     for r in c.execute('SELECT * FROM fx_types ORDER BY id'): print('  fx', r)
     c.close()
 
-def main(opz=False, release=False, native=False):
+def main(opz=False, release=False, native=False, module=None):
     engs, fxs = plugins.load()
     assert 0 < len(engs) <= 15 and len(fxs) <= 15
     for lst in (engs, fxs):                     # order = the number stored in patches (MAGIC + n): never renumber
@@ -399,7 +494,8 @@ def main(opz=False, release=False, native=False):
     code, hooks, syms = build(engs, fxs, native)
     assert len(code) < 0x100000
     shutil.rmtree(OUT_FW, ignore_errors=True); shutil.copytree(SRC_FW, OUT_FW)
-    patch_ldr(os.path.join(SRC_FW, 'OP1_vdk.ldr'), os.path.join(OUT_FW, 'OP1_vdk.ldr'), code, hooks, syms, opz, release)
+    patch_ldr(os.path.join(SRC_FW, 'OP1_vdk.ldr'), os.path.join(OUT_FW, 'OP1_vdk.ldr'), code, hooks, syms, opz, release,
+              module and os.path.abspath(module))
     print(f'code {len(code)} bytes @{CODE_BASE:#x}; ' + ', '.join(f'{k}={syms[k]:#x}' for k in SLOTS))
     patch_db(os.path.join(OUT_FW, 'content', 'op1_factory.db'), engs, fxs)
     disp = os.path.join(OUT_FW, 'content', 'display')
@@ -422,5 +518,6 @@ if __name__ == '__main__':
     ap.add_argument('--opz', action='store_true', help='enable hidden OP-Z controller mode (via SysEx 00 01 03)')
     ap.add_argument('--release', action='store_true', help='boot screen without build time (patcher builds)')
     ap.add_argument('--native', action='store_true', help='bfin-elf tools from PATH instead of Docker')
+    ap.add_argument('--module', metavar='IMAGE.op1', help='also load the module of a known image built on op1r (MODULES)')
     a = ap.parse_args()
-    main(a.opz, a.release, a.native)
+    main(a.opz, a.release, a.native, a.module)

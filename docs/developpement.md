@@ -16,6 +16,7 @@ Pages des ajouts : [roll.md](roll.md), [drive.md](drive.md). Étude du firmware 
 | Séquenceur « roll » | `synth_sdk/seq/roll.c` + `dispatcher.c`, `hook.S`, `link.ld`, `make_firmware.py` | testé sur PC, construit, **pas encore flashé** dans cette forme |
 | Fonctions facultatives des effets | `op1_fx_t` (`op1_plugin.h`) : `render_stereo`, `key`, `knob` | ajoutées pour drive, utilisables par tout effet |
 | Construction sans Docker | `make_firmware.py --native`, `toolchain/build_native.sh` | vérifiée (même résultat que l'image Docker) |
+| Module d'op1_249 (maiko, binaire) | `make_firmware.py --module op1_249.op1`, [op1_249.md](op1_249.md) | construit et vérifié hors ligne, **pas encore flashé** avec op1r 27 |
 
 Le travail se fait sur la branche `claude/refactor-source-repo-ptx23n`.
 
@@ -23,8 +24,8 @@ Le travail se fait sur la branche `claude/refactor-source-repo-ptx23n`.
 `claude/brave-galileo-8ytbnt`) : ils appelaient des adresses internes d'op1r, qu'il fallait relever, épingler et
 vérifier à chaque version. Ici, ils sont compilés et liés **avec** op1r : l'éditeur de liens résout tout à chaque
 build, il n'y a plus d'adresse d'op1r à suivre. Ce qui reste dans cette branche du dépôt `op1r` : les outils
-d'étude de l'image (`tools/fwtool.py`, `fwcheck.py`, `analyze.sh`), l'exemple MIDI panic (jamais flashé) et la
-construction sur l'image tierce op1_249, qui n'a pas d'équivalent ici (voir 9).
+d'étude de l'image (`tools/fwtool.py`, `fwcheck.py`, `analyze.sh`) et l'exemple MIDI panic (jamais flashé). Le
+module de l'image tierce op1_249 se charge ici avec `--module` ([op1_249.md](op1_249.md)).
 
 Compatibilité avec les images binaires précédentes : mêmes noms (« roll », « drive »), même ligne `fx_types`
 (id 14, sélecteur `0x5304`), même `seq_types` (id 9), même table `rollseq` et même format. Les sons et motifs
@@ -218,9 +219,9 @@ nos sources.
 - **drive** : la modulation par LFO et la course des encodeurs d'origine ne sont pas vérifiées ; en master, la liste
   affiche « filter » après redémarrage (comme tape, clouds, reverb) ; les modes sont nos formules, pas celles de
   Serum ; division par échantillon dans trois modes.
-- **op1_249** : cette image tierce embarque le code binaire d'op1r 12 et ses propres modules, branchés sur des
-  adresses d'op1r 12. Elle ne se combine pas avec une construction depuis les sources ; il faudrait les sources de
-  ses ajouts (undo / redo de la bande, quantification sur une gamme, noms des snapshots) pour les porter ici.
+- **op1_249** : son module est chargé en binaire (`--module`, [op1_249.md](op1_249.md)), sans ses sources. Une
+  nouvelle version de maiko demande une nouvelle entrée dans `MODULES`, après la même vérification. Les sources
+  (que la GPL d'op1r lui demande de fournir) permettraient de le porter comme roll et drive.
 - **Pistes** : dossiers de presets pour les moteurs d'op1r (lignes `synth_presets`), presets par moteur dans
   Shift + T1 (constructeur de liste `01a02444`, [firmware-r246.md](firmware-r246.md) §8.4), autres pistes en §11.
 

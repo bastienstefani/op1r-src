@@ -9,13 +9,15 @@ branche `claude/brave-galileo-8ytbnt`) ; ici ils sont compilés avec op1r, sans 
 - [docs/developpement.md](docs/developpement.md) : état, construction, tests, vérifications, points d'accroche,
   identifiants réservés, procédures (nouvelle version amont, nouvelle fonction), pièges ;
 - [docs/roll.md](docs/roll.md), [docs/drive.md](docs/drive.md) : mode d'emploi, branchement, état ;
+- [docs/op1_249.md](docs/op1_249.md) : chargement du module binaire d'op1_249 (maiko) avec `--module` ;
 - [synth_sdk/PLUGINS.md](synth_sdk/PLUGINS.md) : l'API des plugins ;
 - [docs/firmware-r246.md](docs/firmware-r246.md) : étude du firmware d'origine.
 
 ## Règles
 
 - **Ne jamais commiter de firmware** (TE ou tiers) ni rien qui en sort : `*.op1`, `*.ldr`, `op1_246*`,
-  `op1repacker/` sont ignorés.
+  `op1repacker/` sont ignorés. Pour un module tiers (`MODULES`), seuls son sha256 et des adresses ; une image
+  construite avec `--module` ne se diffuse pas sans l'accord de son auteur.
 - Seules des adresses **d'origine** R246 apparaissent dans le code ; un nouveau site patché va dans `HOOKS` de
   `make_firmware.py` avec ses octets d'origine (vérifiés au build).
 - L'`order` d'un plugin est enregistré dans chaque son (sélecteur `0x5300 + order`) : ne jamais le renuméroter
@@ -29,6 +31,7 @@ branche `claude/brave-galileo-8ytbnt`) ; ici ils sont compilés avec op1r, sans 
 toolchain/build_native.sh && export PATH=$PWD/toolchain/bfin/bin:$PATH    # chaîne bfin-elf sans Docker (une fois)
 op1repacker/.venv/bin/op1repacker unpack op1_246.op1                         # -> op1_246/ (une fois)
 cd synth_sdk && python3 make_firmware.py --opz --native                      # -> ../op1_246_custom-repacked.op1
+python3 make_firmware.py --opz --native --module op1_249.op1                 # + module binaire d'op1_249 (docs/op1_249.md)
 python3 harness/audio.py drive && python3 harness/render.py drive            # drive sur PC
 python3 harness/render_roll.py                                               # roll : tests + aperçu
 ```
