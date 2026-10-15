@@ -8,8 +8,9 @@ branche `claude/brave-galileo-8ytbnt`) ; ici ils sont compilés avec op1r, sans 
 À lire d'abord :
 - [docs/developpement.md](docs/developpement.md) : état, construction, tests, vérifications, points d'accroche,
   identifiants réservés, procédures (nouvelle version amont, nouvelle fonction), pièges ;
-- [docs/roll.md](docs/roll.md), [docs/drive.md](docs/drive.md) : mode d'emploi, branchement, état ; drive au format
-  de l'amont, pour une PR vers op1r : branche `claude/drive-fx` ;
+- [docs/roll.md](docs/roll.md), [docs/drive.md](docs/drive.md) : mode d'emploi, branchement, état ; au format de
+  l'amont (op1r 34), pour une PR vers op1r : drive sur la branche `claude/drive-fx`, roll (synthé seulement) sur
+  `claude/roll-seq` ;
 - [docs/op1_249.md](docs/op1_249.md) : chargement du module binaire d'op1_249 (maiko) avec `--module` ;
 - [docs/hundekraft.md](docs/hundekraft.md) : roll et drive en overlay par-dessus l'image hundekraft (`make_overlay.py`) ;
 - [synth_sdk/PLUGINS.md](synth_sdk/PLUGINS.md) : l'API des plugins ;

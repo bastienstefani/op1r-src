@@ -18,6 +18,31 @@ Code : [`synth_sdk/seq/roll.c`](../synth_sdk/seq/roll.c). Test sur PC :
 Le portage garde le même comportement, avec deux corrections (voir plus bas) : l'octave du synthé est lue
 correctement pour tous les slots, et une note sans voix de suivi libre n'est pas jouée au lieu de rester bloquée.
 
+## Version pour l'amont (PR vers op1r)
+
+La branche `claude/roll-seq` (partie d'op1r 34, `pcppcp/op1r-src`) contient roll écrit comme les séquenceurs de
+l'amont (oracle, peal), prêt à être proposé en PR. Il diffère de la version de ce dépôt :
+- **synthé seulement** : choisi en mode batterie, roll reste passif (l'écran affiche « SYNTH MODE ONLY », les
+  touches jouent la batterie comme d'habitude, rien n'est séquencé) ; un seul motif ;
+- greffé sur **finger** (type 3 + `rl_active[mode]`, écran dans l'emplacement `0x2d`), comme euclid, dots, oracle
+  et peal, au lieu de l'arpeggio : aucun nouveau site dans `HOOKS` ;
+- départ calé sur le **temps de l'horloge du métronome** (`op1_beat_clock`, la seule phase de temps commune de
+  l'OP-1), au lieu du compteur du séquenceur et de la greffe `0x01a5e7d0` ; immédiat si cette horloge est arrêtée
+  (elle suit la bande et la bande est à l'arrêt) ;
+- un `reset` / `stop` du lecteur relâche les notes et réarme (la boucle repart du début au temps suivant) ; choisir
+  roll le met sur HOLD ; Start MIDI relance une boucle en lecture depuis le début ;
+- gauche / droite = octave du clavier, lift / drop / ciseaux sans effet (comme peal) ; les rotations gardent les
+  restes d'encodeur ;
+- écran : `display/roll.svg` + `seq/roll_geom.h` (générés par `display/gen_roll_svg.py`), texte en `sq_text`, grille
+  limitée à y 140 (zone visible), lignes de Do nommées (C4 = 60), fin de boucle en rouge atténué ; en-tête grille,
+  LEN, VEL, LOOP, PLAY / HOLD ;
+- sauvegarde par `sq_store` (table `rollseq`, ligne `is_synth = 1`, celle de la batterie vide) ; la ligne commence
+  par un numéro de format (`1`) : les lignes de l'image binaire et de ce dépôt (clé 0 = synthé, sans ce numéro) sont
+  ignorées, le motif repart vide.
+
+Tests : `harness/roll_test.c` (départ au temps, saisie, lecture, polyphonie, réarmement, Start MIDI, mode batterie,
+sauvegarde), aperçu `harness/render_roll.py`. Construit sur op1r 34 (code +5,6 Ko) ; **pas encore flashé**.
+
 ## Commandes
 
 Sur l'écran roll (séquenceur roll sélectionné) :
