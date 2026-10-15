@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Render a plugin (synth or FX) to a WAV file on the PC, to hear it before building firmware.
 
-    python3 harness/audio.py <plugin name or folder> [-o out.wav] [--knobs a,b,c,d]
+    python3 harness/audio.py <plugin name or folder> [-o out.wav] [--knobs a,b,c,d] [--page2 e,f,g]
 
 Synths play a short phrase (velocities 127 / 64 alternating), FX process plucked saw notes followed by
-1.5 s of silence (to hear tails). Knobs default to plugin.json "defaults" (0..32767). Compiled with
+1.5 s of silence (to hear tails). Knobs default to plugin.json "defaults" (0..32767), the page-2 words 5..7 to
+"page2_defaults" (FX). Compiled with
 -fsanitize=address,undefined: out-of-bounds writes and overflows in the plugin are reported.
 """
 import argparse, json, os, subprocess, sys, wave
@@ -28,10 +29,11 @@ def find(p):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('plugin'); ap.add_argument('-o', '--out'); ap.add_argument('--knobs')
+    ap.add_argument('plugin'); ap.add_argument('-o', '--out'); ap.add_argument('--knobs'); ap.add_argument('--page2')
     a = ap.parse_args()
     d, p = find(a.plugin)
     knobs = [int(x) for x in a.knobs.split(',')] if a.knobs else p['defaults']
+    page2 = [int(x) for x in a.page2.split(',')] if a.page2 else p.get('page2_defaults', [])
     exe = os.path.join(HERE, 'build', 'audio_' + p['name'])
     os.makedirs(os.path.dirname(exe), exist_ok=True)
     kind = f'-DENGINE={p["symbol"]}' if p['kind'] == 'synth' else f'-DFX={p["symbol"]}'
@@ -39,13 +41,13 @@ def main():
                     '-fno-sanitize-recover=undefined', '-DOP1_HOST', kind, '-I', SDK,
                     os.path.join(HERE, 'audio_harness.c'), *(os.path.join(d, s) for s in p['sources']),
                     '-lm', '-o', exe], check=True)
-    r = subprocess.run([exe, *map(str, knobs)], capture_output=True)
+    r = subprocess.run([exe, *map(str, (list(knobs) + [0] * 4)[:4] + list(page2))], capture_output=True)
     sys.stderr.write(r.stderr.decode())
     out = a.out or os.path.join(HERE, 'out', f'audio_{p["name"]}.wav')
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with wave.open(out, 'wb') as w:
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(44100); w.writeframes(r.stdout)
-    print(f'{p["kind"]} {p["name"]}, knobs {knobs} -> {out} ({len(r.stdout) / 2 / 44100:.1f} s)')
+    print(f'{p["kind"]} {p["name"]}, knobs {knobs}' + (f' page 2 {page2}' if page2 else '') + f' -> {out} ({len(r.stdout) / 2 / 44100:.1f} s)')
     if r.returncode:
         sys.exit('FAIL: output silent or the plugin crashed (see above)')
 

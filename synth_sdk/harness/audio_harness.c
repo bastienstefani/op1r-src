@@ -30,6 +30,7 @@ int main(int argc, char **argv)
 {
     int16_t k[8] = { 0, 0, 0, 0, 0x5301, 0, 0, 0 };
     for (int i = 0; i < 4 && i + 1 < argc; i++) k[i] = (int16_t)atoi(argv[i + 1]);
+    for (int i = 0; i < 3 && i + 5 < argc; i++) k[5 + i] = (int16_t)atoi(argv[i + 5]);   /* page-2 words 5..7 */
     for (int i = 0; i < 8192; i++) host_sine[i] = (int16_t)lrint(32767.0 * sin(2 * M_PI * i / 8192.0));
 #ifdef ENGINE
     extern const op1_engine_t ENGINE;
