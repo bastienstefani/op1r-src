@@ -26,6 +26,15 @@ cc -O1 -Wall -Wextra -fsanitize=address,undefined -fno-sanitize-recover -DOP1_HO
 
 Les modes sont nos propres formules, nommées d'après ceux de Serum et réglées pour s'en approcher à l'oreille.
 
+## Version pour l'amont (PR vers op1r)
+
+La branche `claude/drive-fx` (partie d'op1r 34, `pcppcp/op1r-src`) contient drive au format d'un plugin de l'amont,
+prêt à être proposé en PR. Elle diffère de la version de ce dépôt :
+- pas de fonctions ajoutées au cœur : les pages de l'amont (bleu 2 = filtre, vert 2 = niveau, blanc 2 = résonance),
+  le mode sur le vert en continu (13 zones), le master sur la somme mono ;
+- aucune division par échantillon (tanh et x/(1+|x|) par tables, ≤ 3 LSB, mêmes chiffres par mode) ;
+- pas de numéro fixe (fichier plugin `.op1p` retrouvé par son nom) ; mot 5 = filtre en 7 zones.
+
 ## Commandes
 
 | | Page 1 | Page 2 |
