@@ -1,0 +1,24 @@
+{
+  "name": "drive",
+  "author": "bastienstefani",
+  "kind": "fx",
+  "symbol": "FX_drive",
+  "sources": [
+    "drive.c"
+  ],
+  "defaults": [
+    9830,
+    1260,
+    16384,
+    32678
+  ],
+  "page2_defaults": [
+    2340,
+    26214,
+    6553
+  ],
+  "screen": {
+    "svg": "drive.svg",
+    "symbol": "SCREEN_drive"
+  }
+}

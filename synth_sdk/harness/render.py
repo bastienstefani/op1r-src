@@ -44,6 +44,14 @@ FX_STATES_BY_NAME = {
                ('page 2 on blue+green (pitch +12, wet)', None, 12, 60, -1, 0b0011, 24576, 32767, 0),
                ('frozen (red press)', None, 12, 60, -1, 0b1000, 16384, 22938, 0),
                ('all page 2 + frozen', (30000, 25000, 26000, 30000), 6, 60, -1, 0b1111, 4000, 20000, 20000)],
+    # drive: mode = centre of zone m of 13 ((2m+1) * 32768 / 26); word 5 filter = centre of zone f of 7 (OFF,
+    # PRE LP / BP / HP, POST LP / BP / HP), word 6 level (26214 = 0 dB), word 7 resonance
+    'drive': [('defaults: tube 30 %, filter off', None, 12, 50, -1, 0, 2340, 26214, 6553),
+              ('hard clip, drive max, PRE LP', (32767, 6301, 12000, 32767), 12, 50, -1, 0, 7021, 26214, 16000),
+              ('sine fold 60 %, POST HP', (19660, 16384, 20000, 32767), 12, 50, -1, 0, 30427, 26214, 8000),
+              ('downsample 50 %, mix 50 %', (16384, 21425, 16384, 16384), 12, 50, -1, 0, 2340, 26214, 6553),
+              ('page 2: POST BP, -6 dB, res 80 %', None, 12, 50, -1, 0b0111, 25746, 19660, 26214),
+              ('rectify 75 %, blue page 2: PRE HP', (24575, 26466, 16384, 32767), 12, 50, -1, 0b0001, 16384, 32767, 6553)],
 }
 FX_STATES = [('defaults, silent', None, 0, 20, -1),
              ('defaults, input bursts', None, 12, 50, -1),
