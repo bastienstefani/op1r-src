@@ -229,16 +229,20 @@ extern volatile uint8_t eu_active[2];
 extern volatile uint8_t dt_active[2];
 /* oracle (seq/oracle.c) and peal (seq/peal.c): same mechanism, flags ora_active[mode] / pl_active[mode] */
 extern volatile uint8_t ora_active[2], pl_active[2];
+/* roll (seq/roll.c): same mechanism, flag rl_active[mode]; synth mode only (in drum mode its player is passive) */
+extern volatile uint8_t rl_active[2];
 int eu_seq_from_name(const dstring *s)
 {
     const char *p = s->cap > 15 ? s->u.ptr : s->u.buf;
     int eu = streq_n(p, "euclid", s->size), d = streq_n(p, "dots", s->size), orc = streq_n(p, "oracle", s->size)
         || streq_n(p, "shield", s->size), pe = streq_n(p, "peal", s->size);   /* (shield: its pre-release name) */
+    int ro = streq_n(p, "roll", s->size);
     eu_active[CUR_MODE()] = (uint8_t)eu;
     dt_active[CUR_MODE()] = (uint8_t)d;
     ora_active[CUR_MODE()] = (uint8_t)orc;
     pl_active[CUR_MODE()] = (uint8_t)pe;
-    return eu || d || orc || pe ? 3 : SEQ_FROM_NAME(s);
+    rl_active[CUR_MODE()] = (uint8_t)ro;
+    return eu || d || orc || pe || ro ? 3 : SEQ_FROM_NAME(s);
 }
 const char *eu_seq_name(int type)
 {
@@ -246,6 +250,7 @@ const char *eu_seq_name(int type)
     if (type == 3 && dt_active[CUR_MODE()]) return "dots";
     if (type == 3 && ora_active[CUR_MODE()]) return "oracle";
     if (type == 3 && pl_active[CUR_MODE()]) return "peal";
+    if (type == 3 && rl_active[CUR_MODE()]) return "roll";
     for (int i = 0; i < 6; i++) if (SEQ_TABLE[i].type == type) return SEQ_TABLE[i].name;
     return "pattern";
 }
@@ -253,14 +258,20 @@ void *eu_player_get(void);
 void *dt_player_get(void);
 void *ora_player_get(void);
 void *pl_player_get(void);
-void *seq_player_get(void)                       /* create_player case 3 (hook): dots, oracle, peal, euclid or finger */
+void *rl_player_get(void);
+void *seq_player_get(void)                       /* create_player case 3 (hook): dots, oracle, peal, roll, euclid or finger */
 {
     if (dt_active[CUR_MODE()]) return dt_player_get();
     if (ora_active[CUR_MODE()]) return ora_player_get();
     if (pl_active[CUR_MODE()]) return pl_player_get();
+    if (rl_active[CUR_MODE()]) return rl_player_get();
     return eu_player_get();
 }
-extern const op1_screen_t SCREEN_euclid, SCREEN_dots, SCREEN_oracle, SCREEN_peal;
+extern const op1_screen_t SCREEN_euclid, SCREEN_dots, SCREEN_oracle, SCREEN_peal, SCREEN_roll;
+void rl_press(int pos, int knob);
+void rl_turn(int pos, int knob, int delta);
+static uint32_t rl_scr[32], rl_scr_vt[10];
+static int rl_scr_ready;
 void pl_press(int pos, int knob, int shift);
 void pl_turn(int pos, int knob, int delta, int shift);
 static uint32_t pl_scr[32], pl_scr_vt[10];
@@ -461,6 +472,7 @@ static void eu_sync_screen(void)
     SCREEN_TABLE[EUCLID_SCREEN_ID] = dt_active[CUR_MODE()] && dt_scr_ready ? (void *)dt_scr
                                    : ora_active[CUR_MODE()] && ora_scr_ready ? (void *)ora_scr
                                    : pl_active[CUR_MODE()] && pl_scr_ready ? (void *)pl_scr
+                                   : rl_active[CUR_MODE()] && rl_scr_ready ? (void *)rl_scr
                                    : eu_active[CUR_MODE()] ? (void *)eu_scr : finger_screen;
 }
 
@@ -697,6 +709,15 @@ void *screens_ctor_hook(void)
         pl_scr_vt[4 * 2 + 1] = (uint32_t)SCREEN_peal.init;
         pl_scr[3] = (uint32_t)pl_scr_vt;
     }
+    {                                                            /* roll screen object (same slot) */
+        void *saved = SCREEN_TABLE[EUCLID_SCREEN_ID];
+        SCREEN_CTOR(rl_scr, EUCLID_SCREEN_ID, "roll.svg");
+        SCREEN_TABLE[EUCLID_SCREEN_ID] = saved;
+        for (int i = 0; i < 10; i++) rl_scr_vt[i] = ITER_SCREEN_VT[i];
+        rl_scr_vt[3 * 2 + 1] = (uint32_t)SCREEN_roll.update;
+        rl_scr_vt[4 * 2 + 1] = (uint32_t)SCREEN_roll.init;
+        rl_scr[3] = (uint32_t)rl_scr_vt;
+    }
     return r;
 }
 
@@ -758,6 +779,10 @@ void screens_load_hook(void *table)
     if (pl_scr[2]) {                                             /* peal screen (slot 0x2D, before euclid's sync) */
         pl_scr[0] = (uint32_t)SVG_LOAD((void *)pl_scr[2]);
         if (pl_scr[0]) { SCREEN_peal.init(pl_scr); pl_scr_ready = 1; }
+    }
+    if (rl_scr[2]) {                                             /* roll screen (slot 0x2D, before euclid's sync) */
+        rl_scr[0] = (uint32_t)SVG_LOAD((void *)rl_scr[2]);
+        if (rl_scr[0]) { SCREEN_roll.init(rl_scr); rl_scr_ready = 1; }
     }
     if (eu_scr[2]) {                                             /* euclid screen (swapped into slot 0x2D) */
         eu_scr[0] = (uint32_t)SVG_LOAD((void *)eu_scr[2]);
@@ -844,6 +869,11 @@ static int peal_page(void)
 {
     eu_sync_screen();
     return pl_scr_ready && pl_active[CUR_MODE()] && CURRENT_SCREEN == EUCLID_SCREEN_ID;
+}
+static int roll_page(void)
+{
+    eu_sync_screen();
+    return rl_scr_ready && rl_active[CUR_MODE()] && CURRENT_SCREEN == EUCLID_SCREEN_ID;
 }
 
 /* the live words (LFO 0xFF8014C4 / 0xFF801644, synth knobs 0xFF8013C4 + slot * 16) are reloaded from the
@@ -980,6 +1010,15 @@ void key_event_hook(int code, int pressed)
             return;
         }
     }
+    if (roll_page()) {                                          /* roll: see seq/roll.c (drum mode: passive) */
+        int m = *(volatile int *)0x01DE4C40 == 1;
+        if (code == 0x24 || code == 0x25) { if (pressed) eu_octave(code == 0x25 ? 1 : -1); return; }
+        if (code >= 0x0A && code <= 0x0C) return;               /* lift / drop / scissors: nothing (finger is not running) */
+        if (code >= 0x3B && code <= 0x3E) {                     /* grid, clear, velocity, play / hold */
+            if (pressed) rl_press(m, press_knob[code - 0x3B]);
+            return;
+        }
+    }
     if ((code == 0x24 || code == 0x25) && euclid_page()) {      /* euclid: left / right = keyboard octave */
         if (pressed) eu_octave(code == 0x25 ? 1 : -1);
         return;
@@ -1102,6 +1141,7 @@ void eu_midi_start(void);
 void dt_midi_start(void);
 void ora_midi_start(void);
 void pl_midi_start(void);
+void rl_midi_start(void);
 void midi_start_hook(void)
 {
     ((void (*)(void))0x01A5E7D0)();                              /* stock: beat counters 0x018C187C / 1880 / 1884 = 0 */
@@ -1133,6 +1173,7 @@ void midi_start_hook(void)
     dt_midi_start();
     ora_midi_start();
     pl_midi_start();
+    rl_midi_start();
 }
 
 void knob_event_hook(int knob, int16_t *delta)
@@ -1155,6 +1196,10 @@ void knob_event_hook(int knob, int16_t *delta)
     }
     if (knob >= 0 && knob < 4 && peal_page()) {                 /* peal: method rate call rough; Shift: oct gate level run */
         pl_turn(*(volatile int *)0x01DE4C40 == 1, knob, *delta, *(volatile uint8_t *)0x01DD7F78);
+        return;
+    }
+    if (knob >= 0 && knob < 4 && roll_page()) {                 /* roll: cursor, pitch rows, note length, loop */
+        rl_turn(*(volatile int *)0x01DE4C40 == 1, knob, *delta);
         return;
     }
     if (knob >= 0 && knob < 4 && euclid_page()) {                /* euclid: edit the selected sequencer */
