@@ -62,18 +62,25 @@ void host_rl_note_off(int pos, int note);
 #else
 static void rl_changed(void);
 /* notes through VoiceCtl like the stock sequencers: key_down 0x01A85750 {midi, vel, send midi = 1}, param 0 (drums:
- * the sound is midi - 0x35, played at the current drum octave); note-off as euclid (seq/euclid.c) */
+ * the sound is midi - 0x35, played at the current drum octave); key_up 0x01A85840 as euclid does (seq/euclid.c).
+ * Only stock addresses: this file also builds into the overlay (overlay/, make_overlay.py). */
 #define VC_DOWN ((void (*)(int32_t *, int))0x01A85750)
-void eu_fw_note_off(int midi);
+#define VC_UP   ((void (*)(int32_t *))0x01A85840)
 static void rl_fw_note_on(int midi, int vel)
 {
     int32_t n[4] = { midi, vel, 0, 0 };
     ((uint8_t *)n)[8] = 1;
     VC_DOWN(n, 0);
 }
+static void rl_fw_note_off(int midi)
+{
+    int32_t n[4] = { midi, 0, 1, 0 };
+    ((uint8_t *)n)[8] = 1;
+    VC_UP(n);
+}
 #define RL_CHANGED()             rl_changed()
 #define RL_NOTE_ON(pos, n, v)    rl_fw_note_on((n), (v))
-#define RL_NOTE_OFF(pos, n)      eu_fw_note_off(n)
+#define RL_NOTE_OFF(pos, n)      rl_fw_note_off(n)
 #endif
 
 static uint16_t rl_grid(const rl_bank_t *b) { return rl_grids[b->grid_i & 3]; }

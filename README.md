@@ -59,6 +59,9 @@ cd synth_sdk && python3 make_firmware.py --opz                    # -> ../op1_24
 Without Docker: `toolchain/build_native.sh` builds the same compiler versions (about 30 minutes), then
 `export PATH=$PWD/toolchain/bfin/bin:$PATH` and `make_firmware.py --opz --native`.
 
+`make_overlay.py BASE.op1` adds roll and drive to another firmware image built on op1r (e.g. a hundekraft build from
+`tools/workshop_build.py`), chaining to whatever hooks the base has; see [docs/hundekraft.md](docs/hundekraft.md).
+
 `--module op1_249.op1` also loads the binary module of maiko's op1_249 image (tape undo / redo, snapshot names,
 scale mode) from your own copy of that image; see [docs/op1_249.md](docs/op1_249.md). Do not distribute such a build
 without its author's consent.

@@ -17,6 +17,7 @@ Pages des ajouts : [roll.md](roll.md), [drive.md](drive.md). Étude du firmware 
 | Fonctions facultatives des effets | `op1_fx_t` (`op1_plugin.h`) : `render_stereo`, `key`, `knob` | ajoutées pour drive, utilisables par tout effet |
 | Construction sans Docker | `make_firmware.py --native`, `toolchain/build_native.sh` | vérifiée (même résultat que l'image Docker) |
 | Module d'op1_249 (maiko, binaire) | `make_firmware.py --module op1_249.op1`, [op1_249.md](op1_249.md) | construit et vérifié hors ligne, **pas encore flashé** avec op1r 27 |
+| roll + drive par-dessus hundekraft (ou toute image construite sur op1r) | `make_overlay.py`, `overlay/`, `tools/workshop_build.py`, [hundekraft.md](hundekraft.md) | construit et vérifié hors ligne sur hundekraft 2.7.1, **pas encore flashé** |
 
 Le travail se fait sur la branche `claude/refactor-source-repo-ptx23n`.
 
